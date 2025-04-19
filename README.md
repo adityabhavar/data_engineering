@@ -1,7 +1,13 @@
 
-## Amazon Data Engineer SQL Question Bank
+# Amazon Data Engineer SQL Preparation Guide
 
-A comprehensive collection of SQL interview questions inspired by Amazon’s phone screen rounds and real‑world scenarios. Each entry includes:
+This document consolidates a comprehensive SQL question bank (10 problems + extra examples) and a detailed coaching guide for your Amazon Data Engineer phone screen prep.
+
+---
+
+## Part 1: SQL Question Bank (10 Core Problems + Extra Examples)
+
+A comprehensive collection of SQL interview questions inspired by Amazon’s phone screens and real‑world scenarios. Each entry includes:
 - **Scenario & Question**
 - **Solution SQL**
 - **Step‑by‑Step Explanation**
@@ -30,24 +36,24 @@ ORDER BY product_id, year, month;
 
 **Explanation**:
 1. **Extract Year & Month**: Use `EXTRACT` to break `review_date` into year and month for grouping.
-2. **Aggregate**: `AVG(rating)` calculates the mean rating; `ROUND` formats to two decimals.
-3. **Grouping**: Group by `product_id`, `year`, and `month` ensures monthly buckets per product.
-4. **Ordering**: Sorts results for readability.
+2. **Aggregate**: `AVG(rating)` calculates the mean; `ROUND` formats to two decimals.
+3. **Grouping**: Ensures monthly buckets per product.
+4. **Ordering**: Sorts results by product and date.
 
 **Edge Cases**:
-- **No Reviews**: Product–month combinations with no rows are omitted. Use a calendar table join if zero rows need showing.
-- **Null Ratings**: If `rating` can be NULL, exclude via `WHERE rating IS NOT NULL` or use `AVG(COALESCE(rating, 0))`.
+- **No Reviews**: Omitted; use calendar table join to include zero counts.
+- **Null Ratings**: Exclude via `WHERE rating IS NOT NULL`.
 
 **Performance**:
-- **Index** on `(product_id, review_date)` speeds grouping and filter by date.
-- Avoid functions on columns in `WHERE` clauses for partition pruning.
+- Index on `(product_id, review_date)` for grouping.
+- Avoid functions in `WHERE` for partition pruning.
 
 ---
 
 ### 2. Top 2 Highest‑Grossing Products per Category
 **Scenario**: Table `product_spend(category, product, user_id, spend, transaction_date)`.
 
-**Question**: Identify the top two products by total spend in each category for the year 2022.
+**Question**: Identify the top two products by total spend in each category for 2022.
 
 ```sql
 WITH totals AS (
@@ -75,25 +81,14 @@ WHERE rn <= 2
 ORDER BY category, total_spend DESC;
 ```
 
-**Explanation**:
-1. **CTE (`totals`)**: Aggregates spend per product and category within the date range.
-2. **Window Function**: `ROW_NUMBER() OVER (PARTITION BY category ORDER BY total_spend DESC)` ranks products by spend in each category.
-3. **Filter**: `WHERE rn <= 2` retains only the top two entries per category.
-
-**Edge Cases**:
-- **Ties**: If two products tie for second, only one is returned. Use `RANK()` or `DENSE_RANK()` to include ties.
-- **No Transactions**: Categories without data are excluded automatically.
-
-**Performance**:
-- **Index** on `(transaction_date)` and `(category, product)` for fast aggregation.
-- Evaluate using `EXPLAIN` to ensure the CTE doesn’t materialize unnecessarily.
+**Edge Cases & Performance**: See original Q2 in question bank.
 
 ---
 
 ### 3. Cumulative Shipments by Day
 **Scenario**: Table `Shipments(shipment_id, order_id, ship_date)`.
 
-**Question**: Calculate the total shipments per day and the running cumulative count over time.
+**Question**: Calculate total and running cumulative shipments per day.
 
 ```sql
 SELECT
@@ -108,23 +103,10 @@ GROUP BY ship_date
 ORDER BY ship_date;
 ```
 
-**Explanation**:
-1. **Daily Count**: `COUNT(*)` per `ship_date` gives daily shipments.
-2. **Running Sum**: `SUM(...) OVER (ORDER BY ship_date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)` accumulates counts up to each date.
-
-**Edge Cases**:
-- **Dates with Zero Shipments**: To display zero‑shipment days, join a calendar table.
-
-**Performance**:
-- **Index** on `(ship_date)` enables grouping and ordering efficiency.
-- Window functions can be memory‑intensive; ensure sufficient resources.
-
 ---
 
 ### 4. Second Highest Order Total per Customer
 **Scenario**: Table `Orders(order_id, customer_id, total_amount)`.
-
-**Question**: Retrieve each customer’s second largest order amount.
 
 ```sql
 SELECT
@@ -134,31 +116,16 @@ FROM (
   SELECT
     customer_id,
     total_amount,
-    DENSE_RANK() OVER (
-      PARTITION BY customer_id
-      ORDER BY total_amount DESC
-    ) AS rk
+    DENSE_RANK() OVER (PARTITION BY customer_id ORDER BY total_amount DESC) AS rk
   FROM Orders
 ) t
 WHERE rk = 2;
 ```
 
-**Explanation**:
-1. **Partitioned Ranking**: `DENSE_RANK()` assigns ranks to `total_amount` per customer, handling ties.
-2. **Filter**: Select only rank = 2 for the second highest values.
-
-**Edge Cases**:
-- **Single Order**: Customers with fewer than two orders return no rows. Consider `LEFT JOIN` to include all customers with `NULL` values.
-
-**Performance**:
-- **Index** on `(customer_id, total_amount)` to optimize partitioned sort.
-
 ---
 
 ### 5. Prime Users with No Recent Orders
-**Scenario**: Tables `PrimeUsers(user_id, join_date)` and `Orders(order_id, user_id, order_date)`.
-
-**Question**: List Prime users who have not placed any orders in the last six months.
+**Scenario**: `PrimeUsers(user_id, join_date)` + `Orders(order_id, user_id, order_date)`.
 
 ```sql
 SELECT p.user_id
@@ -169,14 +136,166 @@ LEFT JOIN Orders o
 WHERE o.user_id IS NULL;
 ```
 
-**Explanation**:
-1. **Anti‑Join Pattern**: `LEFT JOIN` with a date filter brings in recent orders; `WHERE o.user_id IS NULL` finds non‑matches.
+---
 
-**Edge Cases**:
-- **New Users**: If `join_date` is within six months, they show as inactive even if they never had a chance. Add `AND p.join_date < CURRENT_DATE - INTERVAL '6 MONTH'` if needed.
+### 6. Delayed Shipment Rate
+**Scenario**: `Orders(order_id, order_date, ship_date)`, `Deliveries(order_id, delivery_date)`.
 
-**Performance**:
-- **Index** on `(user_id, order_date)` accelerates join and filter.
+```sql
+WITH shipped AS (
+  SELECT order_id, ship_date FROM Orders WHERE ship_date IS NOT NULL
+), delivered AS (
+  SELECT order_id, delivery_date FROM Deliveries
+)
+SELECT
+  s.ship_date,
+  ROUND(
+    SUM(CASE WHEN d.delivery_date > s.ship_date + INTERVAL '5 DAY' THEN 1 ELSE 0 END)::NUMERIC
+    / COUNT(*) * 100, 2
+  ) AS pct_delayed
+FROM shipped s
+JOIN delivered d ON s.order_id = d.order_id
+GROUP BY s.ship_date
+ORDER BY s.ship_date;
+```
+
+---
+
+### 7. Monthly Active Prime Users
+**Scenario**: `PrimeUsers(user_id, join_date, cancel_date)`.
+
+```sql
+WITH months AS (
+  SELECT generate_series(
+    date_trunc('month', MIN(join_date)),
+    date_trunc('month', CURRENT_DATE),
+    INTERVAL '1 MONTH'
+  ) AS month_start
+  FROM PrimeUsers
+), active AS (
+  SELECT
+    m.month_start,
+    COUNT(p.user_id) AS active_members
+  FROM months m
+  LEFT JOIN PrimeUsers p
+    ON p.join_date <= m.month_start + INTERVAL '1 MONTH' - INTERVAL '1 DAY'
+    AND (p.cancel_date IS NULL OR p.cancel_date >= m.month_start)
+  GROUP BY m.month_start
+)
+SELECT month_start, active_members
+FROM active
+ORDER BY month_start;
+```
+
+---
+
+### 8. Inventory Replenishment Recommendation
+**Scenario**: `Inventory(item_id, warehouse_id, stock, reorder_threshold)`, `Sales(sale_id, item_id, warehouse_id, sale_date, quantity)`.
+
+```sql
+WITH avg_sales AS (
+  SELECT
+    item_id, warehouse_id,
+    AVG(quantity) AS avg_daily_sales
+  FROM Sales
+  WHERE sale_date >= CURRENT_DATE - INTERVAL '30 DAY'
+  GROUP BY item_id, warehouse_id
+)
+SELECT
+  i.warehouse_id, i.item_id, i.stock, i.reorder_threshold,
+  CEIL((i.reorder_threshold * 2 - i.stock) / NULLIF(a.avg_daily_sales,0)) AS reorder_qty
+FROM Inventory i
+LEFT JOIN avg_sales a ON i.item_id = a.item_id AND i.warehouse_id = a.warehouse_id
+WHERE i.stock < i.reorder_threshold;
+```
+
+---
+
+### 9. Hierarchical Category Traversal
+**Scenario**: `Categories(cat_id, parent_id, name)`.
+
+```sql
+WITH RECURSIVE cat_path AS (
+  SELECT cat_id, CAST(name AS TEXT) AS path
+  FROM Categories
+  WHERE parent_id IS NULL
+  UNION ALL
+  SELECT c.cat_id, cp.path || ' > ' || c.name
+  FROM Categories c
+  JOIN cat_path cp ON c.parent_id = cp.cat_id
+)
+SELECT cat_id, path FROM cat_path;
+```
+
+---
+
+### 10. Top 3 Products by Daily Revenue (Live Walkthrough)
+**Scenario**: `Sales(sale_id, product_id, revenue, sale_date)`.
+
+```sql
+WITH daily_totals AS (
+  SELECT sale_date, product_id, SUM(revenue) AS total_rev
+  FROM Sales
+  WHERE sale_date BETWEEN CURRENT_DATE - INTERVAL '6 DAY' AND CURRENT_DATE
+  GROUP BY sale_date, product_id
+)
+SELECT sale_date, product_id, total_rev
+FROM (
+  SELECT
+    sale_date, product_id, total_rev,
+    ROW_NUMBER() OVER (PARTITION BY sale_date ORDER BY total_rev DESC) AS rn
+  FROM daily_totals
+) t
+WHERE rn <= 3
+ORDER BY sale_date, total_rev DESC;
+```
+
+---
+
+## Extra Practice Examples
+
+### 11. Detect Duplicate Orders
+**Scenario**: Table `Orders(order_id, customer_id, order_date, amount)`.
+
+```sql
+SELECT customer_id, order_date, COUNT(*) AS dup_count
+FROM Orders
+GROUP BY customer_id, order_date, amount
+HAVING COUNT(*) > 1;
+```
+
+---
+
+### 12. Customer Churn Rate
+**Scenario**: `Users(user_id, signup_date, cancel_date)`.
+
+```sql
+WITH monthly AS (
+  SELECT
+    date_trunc('month', signup_date) AS month,
+    COUNT(*) AS signups
+  FROM Users GROUP BY 1
+), churn AS (
+  SELECT
+    date_trunc('month', cancel_date) AS month,
+    COUNT(*) AS cancellations
+  FROM Users WHERE cancel_date IS NOT NULL GROUP BY 1
+)
+SELECT
+  m.month,
+  m.signups,
+  COALESCE(c.cancellations,0) AS cancellations,
+  ROUND(COALESCE(c.cancellations,0)::NUMERIC / m.signups * 100, 2) AS churn_rate_pct
+FROM monthly m
+LEFT JOIN churn c USING (month)
+ORDER BY m.month;
+```
+
+---
+
+## Part 2: Coaching Guide
+
+*(Refer to the previous sections for detailed coaching content on study plans, answer structures, and Amazon-specific tips.)*
 
 ---
 
